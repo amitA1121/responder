@@ -1,0 +1,57 @@
+# satrecon configuration.
+#
+# Everything here is optional - the pipeline runs on built-in defaults.
+# What this file is really for is telling the pipeline what you KNOW, so it
+# does not have to guess. Anything you set here is treated as authoritative
+# and is never overwritten by a heuristic.
+
+image:
+  # Anticlockwise degrees from image-up to true north. Leave null if unknown;
+  # orientations are then reported relative to the image, not to north.
+  north_offset_deg: null
+
+scale:
+  # --- Option 1: you already know the ground resolution -------------------
+  # meters_per_pixel: 0.25
+
+  # --- Option 2: you can point at two things a known distance apart -------
+  # Pixel coordinates in the SOURCE image, and the real separation between
+  # them. This is usually the easiest reliable option.
+  reference:
+    point_a: null            # [x, y]
+    point_b: null            # [x, y]
+    distance_meters: null    # e.g. 50
+
+  # --- Option 3: the imagery came with a ground sample distance -----------
+  # ground_sample_distance: 0.31
+
+  # If none of the above is set, the scale is reported as UNKNOWN and every
+  # dimension stays in pixels. Nothing downstream will invent metres.
+
+geo:
+  center_lat: null
+  center_lon: null
+  crs: null
+
+shadow_direction:
+  # The pipeline estimates this from the image. Override if you know better
+  # (degrees, image frame, pointing from a structure toward its own shadow).
+  override_deg: null
+
+detector:
+  name: classical
+  params:
+    # Lower to detect more (and accept more false positives); raise for fewer,
+    # higher-precision detections. Expect to tune this per image.
+    accept_score: 0.44
+
+footprint:
+  # Drop candidates smaller than this in source pixels.
+  min_area_px: 900
+  # Douglas-Peucker tolerance as a fraction of contour perimeter.
+  # Larger = simpler polygons, fewer preserved corners.
+  simplify_fraction: 0.012
+  regularize: true
+
+logging:
+  level: INFO

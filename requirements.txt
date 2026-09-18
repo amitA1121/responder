@@ -1,0 +1,5 @@
+# Phase 1 runtime dependencies.
+numpy>=1.26
+opencv-python-headless>=4.9
+Pillow>=10.0
+PyYAML>=6.0
