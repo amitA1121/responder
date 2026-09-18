@@ -154,6 +154,9 @@ class Scene:
     shadow_direction_deg: float | None = None
     north_offset_deg: float | None = None
     config: dict[str, Any] = field(default_factory=dict)
+    # Roads/paths as polygons. Populated by the generator; the detection path
+    # leaves it empty until road extraction lands.
+    roads: list[dict[str, Any]] = field(default_factory=list)
 
     # -- serialisation ----------------------------------------------------
 
@@ -182,6 +185,7 @@ class Scene:
                 "resultHash": self.meta.result_hash,
             },
             "config": self.config,
+            "roads": self.roads,
             "buildings": [b.to_json() for b in self.buildings],
         }
 
@@ -238,6 +242,7 @@ class Scene:
             shadow_direction_deg=scene_node.get("shadowDirectionDeg"),
             north_offset_deg=scene_node.get("northOffsetDeg"),
             config=data.get("config", {}),
+            roads=data.get("roads", []),
         )
 
 

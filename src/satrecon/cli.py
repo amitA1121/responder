@@ -62,11 +62,31 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--embed-image", action="store_true")
     _add_common(review)
 
+    generate = subparsers.add_parser("generate", help="procedurally generate a scene (no image)")
+    generate.add_argument("--seed", type=int, help="override the configured seed")
+    generate.add_argument("--out", "-o", help="scene JSON path (default data/<name>.json)")
+    generate.add_argument("--name", help="scene name")
+    generate.add_argument("--export", action="store_true", help="also write the 3D export")
+    generate.add_argument("--no-review", action="store_true", help="skip the 2D review page")
+    _add_common(generate)
+
+    export = subparsers.add_parser("export", help="write 3D geometry from a scene file")
+    export.add_argument("scene", help="scene JSON")
+    export.add_argument("--out", "-o", help="output path (extension set by the exporter)")
+    export.add_argument("--format", "-f", default="glb", help="exporter name (default glb)")
+    export.add_argument("--default-height", type=float,
+                        help="extrude buildings that have no height, using this value in metres")
+    export.add_argument("--no-ground", action="store_true")
+    export.add_argument("--no-roads", action="store_true")
+    _add_common(export)
+
     verify = subparsers.add_parser("verify", help="re-run analysis and compare the result hash")
     verify.add_argument("scene", help="scene JSON to reproduce")
     _add_common(verify)
 
     subparsers.add_parser("detectors", help="list registered detectors")
+    subparsers.add_parser("generators", help="list registered generators")
+    subparsers.add_parser("exporters", help="list registered exporters")
     return parser
 
 
@@ -123,6 +143,79 @@ def cmd_analyze(args) -> int:
     return 0
 
 
+def cmd_generate(args) -> int:
+    from .generate import get_generator
+    from .generate import neighborhood  # noqa: F401  (registers "neighborhood")
+
+    config = _configure(args)
+    params = config.section("generator.params")
+    if args.name:
+        params["name"] = args.name
+    seed = args.seed if args.seed is not None else int(config.get("generator.seed", 1))
+
+    generator = get_generator(config.get("generator.name", "neighborhood"), params)
+    scene = generator.generate(seed)
+    scene.config["configFingerprint"] = config.fingerprint()
+
+    scene_path = Path(args.out) if args.out else DEFAULT_DATA_DIR / f"{scene.meta.name}.json"
+    scene.save(scene_path)
+    log.info("wrote scene %s", scene_path)
+
+    out_dir = DEFAULT_OUTPUT_DIR / scene.meta.name
+    review_path = None
+    if not args.no_review:
+        from .debug import review as review_mod
+        review_path = review_mod.write(scene, out_dir / "review.html", None)
+
+    export_path = None
+    if args.export:
+        from .export import get_exporter
+        from .export import gltf  # noqa: F401  (registers "glb")
+
+        exporter = get_exporter(config.get("export.name", "glb"), config.section("export.params"))
+        export_path = exporter.export(scene, out_dir / scene.meta.name)
+
+    floors = [b.estimated_floors for b in scene.buildings if b.estimated_floors]
+    heights = [b.estimated_height_m for b in scene.buildings if b.estimated_height_m]
+    print()
+    print(f"scene       {scene_path}")
+    if review_path:
+        print(f"review      {review_path}")
+    if export_path:
+        print(f"export      {export_path}")
+    print(f"buildings   {len(scene.buildings)}   roads {len(scene.roads)}")
+    if heights:
+        print(f"heights     {min(heights):.1f}-{max(heights):.1f} m   "
+              f"floors {min(floors)}-{max(floors)}")
+    print(f"site        {scene.meta.image_width} x {scene.meta.image_height} m")
+    print(f"seed        {seed}   result hash {scene.meta.result_hash[:16]}")
+    print()
+    print("Generated scene - not derived from any image or real location.")
+    return 0
+
+
+def cmd_export(args) -> int:
+    from .export import get_exporter
+    from .export import gltf  # noqa: F401
+    from .model import Scene
+
+    config = _configure(args)
+    scene = Scene.load(args.scene)
+    params = config.section("export.params")
+    if args.no_ground:
+        params["include_ground"] = False
+    if args.no_roads:
+        params["include_roads"] = False
+    if args.default_height is not None:
+        params["default_height_m"] = args.default_height
+
+    exporter = get_exporter(args.format, params)
+    out = Path(args.out) if args.out else DEFAULT_OUTPUT_DIR / scene.meta.name / scene.meta.name
+    path = exporter.export(scene, out)
+    print(path)
+    return 0
+
+
 def cmd_review(args) -> int:
     from .debug import review
     from .model import Scene
@@ -169,11 +262,31 @@ def cmd_verify(args) -> int:
 
 
 def cmd_detectors(_args) -> int:
-    configure("INFO")
+    configure("WARNING")
     from .detect import available_detectors
     from .detect import classical  # noqa: F401  (registration side effect)
 
     for name in available_detectors():
+        print(name)
+    return 0
+
+
+def cmd_generators(_args) -> int:
+    configure("WARNING")
+    from .generate import available_generators
+    from .generate import neighborhood  # noqa: F401
+
+    for name in available_generators():
+        print(name)
+    return 0
+
+
+def cmd_exporters(_args) -> int:
+    configure("WARNING")
+    from .export import available_exporters
+    from .export import gltf  # noqa: F401
+
+    for name in available_exporters():
         print(name)
     return 0
 
@@ -185,6 +298,10 @@ def main(argv: list[str] | None = None) -> int:
         "review": cmd_review,
         "verify": cmd_verify,
         "detectors": cmd_detectors,
+        "generate": cmd_generate,
+        "export": cmd_export,
+        "generators": cmd_generators,
+        "exporters": cmd_exporters,
     }
     try:
         return handlers[args.command](args)

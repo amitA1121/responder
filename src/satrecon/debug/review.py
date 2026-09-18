@@ -43,6 +43,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .stage { position: relative; flex: 1 1 560px; min-width: 320px; background: #000;
            border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .stage img { display: block; width: 100%; height: auto; }
+  .stage #noimage { display: none; width: 100%; background: #20242b; }
   .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   polygon { cursor: pointer; stroke-width: 2; vector-effect: non-scaling-stroke; }
   polygon.sel { stroke: #fff; stroke-width: 3; }
@@ -76,13 +77,15 @@ _TEMPLATE = """<!DOCTYPE html>
 <div class="wrap">
   <div class="stage" id="stage">
     <img id="base" src="__IMAGE_SRC__" alt="source image">
+    <div id="noimage"></div>
     <svg id="ov" viewBox="0 0 __W__ __H__" preserveAspectRatio="none"></svg>
   </div>
 
   <div class="side">
     <div class="card">
       <h2>Layers</h2>
-      <label class="row"><input type="checkbox" id="t-image" checked> Satellite image</label>
+      <label class="row" id="row-image"><input type="checkbox" id="t-image" checked> Satellite image</label>
+      <label class="row"><input type="checkbox" id="t-roads" checked> Roads</label>
       <label class="row"><input type="checkbox" id="t-fill" checked> Footprint fill</label>
       <label class="row"><input type="checkbox" id="t-outline" checked> Footprint outline</label>
       <label class="row"><input type="checkbox" id="t-labels" checked> Building IDs</label>
@@ -113,6 +116,7 @@ _TEMPLATE = """<!DOCTYPE html>
 
 <script>
 const SCENE = __SCENE_JSON__;
+const HAS_IMAGE = __HAS_IMAGE__;
 const COLORS = { HIGH: "#57d971", MEDIUM: "#ffb454", LOW: "#ff6b6b" };
 const ov = document.getElementById("ov");
 const NS = "http://www.w3.org/2000/svg";
@@ -126,6 +130,15 @@ function el(tag, attrs) {
 
 function draw() {
   ov.innerHTML = "";
+  if (document.getElementById("t-roads").checked && SCENE.roads) {
+    for (const road of SCENE.roads) {
+      ov.appendChild(el("polygon", {
+        points: road.polygon.map(p => p.join(",")).join(" "),
+        fill: "#3a3f47", stroke: "none", "pointer-events": "none",
+        "fill-opacity": HAS_IMAGE ? 0.45 : 0.9
+      }));
+    }
+  }
   const showContour = document.getElementById("t-contour").checked;
   const showFill = document.getElementById("t-fill").checked;
   const showOutline = document.getElementById("t-outline").checked;
@@ -236,6 +249,18 @@ document.getElementById("t-image").addEventListener("change", e => {
   document.getElementById("base").style.visibility = e.target.checked ? "visible" : "hidden";
 });
 
+document.getElementById("t-roads").addEventListener("change", draw);
+
+if (!HAS_IMAGE) {
+  const base = document.getElementById("base");
+  base.style.display = "none";
+  const filler = document.getElementById("noimage");
+  filler.style.display = "block";
+  // Reserve the scene's aspect ratio so the SVG overlay has somewhere to live.
+  filler.style.aspectRatio = `${SCENE.scene.image.width} / ${SCENE.scene.image.height}`;
+  document.getElementById("row-image").style.display = "none";
+}
+
 renderScene();
 renderList();
 draw();
@@ -245,11 +270,19 @@ draw();
 """
 
 
-def write(scene: Scene, out_path: Path, image_path: Path, embed_image: bool = False) -> Path:
-    """Render the review page. Copies the image beside it unless embedding."""
+def write(
+    scene: Scene, out_path: Path, image_path: Path | None, embed_image: bool = False
+) -> Path:
+    """Render the review page.
+
+    `image_path` is None for generated scenes, which have no backdrop; the page
+    then draws the geometry on a plain field and hides the image toggle.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if embed_image:
+    if image_path is None:
+        image_src = ""
+    elif embed_image:
         suffix = image_path.suffix.lower().lstrip(".")
         mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(suffix, "png")
         payload = base64.b64encode(image_path.read_bytes()).decode()
@@ -267,6 +300,7 @@ def write(scene: Scene, out_path: Path, image_path: Path, embed_image: bool = Fa
         .replace("__W__", str(scene.meta.image_width))
         .replace("__H__", str(scene.meta.image_height))
         .replace("__SCENE_JSON__", json.dumps(scene.to_json()))
+        .replace("__HAS_IMAGE__", "true" if image_path is not None else "false")
     )
     out_path.write_text(html)
     log.info("wrote review page %s", out_path)

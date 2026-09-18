@@ -99,6 +99,42 @@ DEFAULTS: dict[str, Any] = {
             "merge_dilate_px": 3,
         },
     },
+    "generator": {
+        "name": "neighborhood",
+        "seed": 1,
+        "params": {
+            "name": "neighborhood",
+            "site_width_m": 420.0,
+            "site_depth_m": 320.0,
+            # Rotating the whole site stops the grid reading as graph paper.
+            "rotation_deg": 18.0,
+            # 1.0 = dense centre falling to low-rise edges; 0.0 = uniform.
+            "density_falloff": 1.0,
+            "roads": {
+                "target_block_area_m2": 5200.0,
+                "min_block_side_m": 42.0,
+                "max_depth": 6,
+                "road_widths_m": [18.0, 12.0, 9.0, 7.0],
+                "split_jitter": 0.12,
+            },
+            "lots": {
+                "target_lot_area_m2": 900.0,
+                "min_lot_side_m": 14.0,
+                "max_depth": 5,
+                "split_jitter": 0.16,
+            },
+            # Override any typology here; see generate/typology.py for defaults.
+            "typologies": {},
+        },
+    },
+    "export": {
+        "name": "glb",
+        "params": {
+            "include_ground": True,
+            "include_roads": True,
+            "roof_pitch_m": 2.6,
+        },
+    },
     "footprint": {
         "min_area_px": 900,
         # Douglas-Peucker tolerance as a fraction of contour perimeter.
