@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Pipeline artifacts (regenerate with `satrecon analyze`)
+output/*
+!output/.gitkeep
+data/*
+!data/.gitkeep
+
+# User-supplied imagery is not committed by default.
+input/*
+!input/.gitkeep
+!input/README.md
