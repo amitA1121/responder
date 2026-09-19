@@ -69,8 +69,8 @@ _TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>__TITLE__ &mdash; Phase 1 footprint review</h1>
-  <span class="warn">Approximate detections from one image. Not measurements. Height, floors and roof type are not estimated in Phase 1.</span>
+  <h1>__TITLE__ &mdash; footprint &amp; height review</h1>
+  <span class="warn">Approximate estimates from one image. Not measurements. Heights come from cast shadows and depend on the scale and sun elevation; roof type is assumed flat.</span>
 </header>
 
 <div class="wrap">
@@ -223,6 +223,7 @@ function renderScene() {
     <tr><td class="k">Scale source</td><td>${s.scale.source}</td></tr>
     <tr><td class="k">Shadow dir.</td><td>${s.shadowDirectionDeg}&deg; (image frame)</td></tr>
     <tr><td class="k">North offset</td><td>${s.northOffsetDeg == null ? "unknown" : s.northOffsetDeg + "&deg;"}</td></tr>
+    <tr><td class="k">Sun elevation</td><td>${s.sun == null || s.sun.elevation_deg == null ? "<b style='color:var(--medium)'>UNKNOWN &mdash; heights not estimated</b>" : s.sun.elevation_deg + "&deg; (" + s.sun.source + ")"}</td></tr>
     <tr><td class="k">Detector</td><td>${p.detector}</td></tr>
     <tr><td class="k">Result hash</td><td><code>${p.resultHash.slice(0, 16)}</code></td></tr>`;
   document.getElementById("notes").innerHTML =

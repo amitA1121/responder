@@ -42,6 +42,26 @@ DEFAULTS: dict[str, Any] = {
         "center_lon": None,
         "crs": None,
     },
+    "sun": {
+        # Solar elevation above the horizon, degrees. Authoritative if set.
+        # null => compute from geo.center_lat/lon + sun.timestamp, else unknown.
+        "elevation_deg": None,
+        "azimuth_deg": None,
+        # ISO 8601 with a UTC offset, e.g. 2024-06-01T10:30:00+03:00.
+        "timestamp": None,
+    },
+    "height": {
+        # Rays are launched from the shadow-facing footprint edges and marched
+        # along the estimated shadow direction until the shadow cue runs out.
+        "ray_spacing_px": 6.0,
+        "max_shadow_px": 400.0,
+        "gap_tolerance_px": 3,
+        "start_offset_px": 1.5,
+        "min_rays": 3,
+        # Metres per storey, for turning a height into an approximate floor
+        # count. A mid-rise commercial default; override per site.
+        "floor_height_m": 3.2,
+    },
     "preprocess": {
         # Edge-preserving mean-shift smoothing. Flattens roof texture while
         # keeping roof/ground boundaries sharp.

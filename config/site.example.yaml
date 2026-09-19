@@ -33,6 +33,29 @@ geo:
   center_lon: null
   crs: null
 
+sun:
+  # Height estimation needs the sun's elevation. Three ways to supply it,
+  # first match wins - exactly like scale, nothing is invented:
+  #
+  #   1. State it directly (degrees above the horizon):
+  # elevation_deg: 58
+  #
+  #   2. Let it be computed from geo.center_lat/lon and a capture time.
+  #      Requires an ISO 8601 timestamp WITH a UTC offset:
+  # timestamp: 2024-06-01T10:30:00+03:00
+  #
+  # If neither is available the sun stays unknown and heights are not
+  # estimated; footprints are still produced and can be extruded at a
+  # placeholder height.
+  elevation_deg: null
+  azimuth_deg: null
+  timestamp: null
+
+height:
+  # Metres per storey, used only to turn an estimated height into an
+  # approximate floor count. Override for the building stock at your site.
+  floor_height_m: 3.2
+
 shadow_direction:
   # The pipeline estimates this from the image. Override if you know better
   # (degrees, image frame, pointing from a structure toward its own shadow).

@@ -26,6 +26,7 @@ class DetectionContext:
     """
 
     bgr: np.ndarray
+    scale_factor: float = 1.0
     preprocessed: Any = None
     cues: Any = None
     shadow_direction: Any = None

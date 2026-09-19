@@ -1,7 +1,8 @@
 # Architecture and design decisions
 
-This document records *why* the pipeline is shaped the way it is, and what the
-Phase 2+ stages will need. It is the companion to the stage table in the README.
+This document records *why* the pipeline is shaped the way it is. Phases 1 and 2
+are implemented; Phases 3–4 are still planned. It is the companion to the stage
+table in the README.
 
 ## Design rules
 
@@ -66,39 +67,68 @@ the peakedness of the response, so a scene with few or ambiguous shadows
 attenuates the shadow cue rather than trusting a noisy direction.
 
 This stage exists on its own — rather than inside the detector — because
-Phase 2 needs exactly the same direction for shadow-based height estimation.
+height estimation needs exactly the same direction.
 
-## Phase 2: height and floors (not yet implemented)
+## Phase 2: solar geometry, height and floors
 
-Planned strategies, in priority order, each recording its own source:
+### Solar elevation is resolved like scale
 
-1. `user_supplied` — a height given in the config or via correction.
-2. `shadow` — for a building with a measurable attached shadow,
-   `height ≈ shadow_length × tan(solar_elevation)`. This needs the shadow run
-   length along the estimated direction *and* a solar elevation. Elevation can
-   come from the config, or from a capture timestamp plus coordinates. Without
-   one, only *relative* heights are recoverable, and they must be labelled as
-   such. Uncertainty is dominated by the elevation estimate and by shadows
-   falling on sloped or occluded ground.
-3. `facade` — where an off-nadir view shows a facade, its lean gives height.
-4. `heuristic` — a generic fallback, with low confidence, clearly marked.
+`stages/sun.py` mirrors `stages/scale.py` exactly: a value is used only if it
+can be traced to something the user supplied, and there is no image-only
+fallback. Resolution order is (1) an explicit `sun.elevation_deg`, (2) the NOAA
+solar-position algorithm applied to `geo.center_lat/lon` plus a timestamp with a
+UTC offset, else (3) unknown, in which case heights are not estimated. A
+computed position below the horizon is reported unknown rather than negative —
+that means the inputs are wrong, not that the building has negative height.
 
-Floors follow from `round(height / floor_height)` with per-use-type floor
-heights from the config. The building use type must not be guessed: when there
-is no evidence, the assumption used is recorded and the confidence lowered.
+The computed case also yields the sun's azimuth, which gives the shadow
+direction the sun *implies*. That is compared against the direction recovered
+from the image and surfaced in the scene notes as a cross-check; the image
+direction is never silently overridden by it.
 
-## Phase 3: 3D generation
+### Height from shadows
 
-Recommended split, to be confirmed before implementation:
+`stages/height.py` measures a shadow length and converts it:
+`height = shadow_length × tan(elevation)`. The measurement casts rays outward
+from the shadow-facing footprint edges (selected by the sign of each edge's
+outward normal against the shadow direction) and counts how far the shadow cue
+persists, tolerating small gaps. The robust aggregate of the ray lengths is the
+shadow length; the spread of the rays becomes a per-building agreement score.
 
-- **glTF/GLB as the interchange format**, written directly. It carries per-mesh
-  metadata via `extras`, loads in every web viewer, and imports into Blender
-  without a Blender dependency in the core pipeline.
-- **Blender as an optional target**, driven by a standalone `bpy` script that
-  reads the same scene JSON. Keeping Blender out of the core means the pipeline
-  runs without it installed, which matters for reproducibility and CI.
+The pure geometry (`height_from_shadow_m`, `estimated_floors`) is separated from
+the image measurement so it can be tested against hand-computed values, and the
+image measurement is tested against synthetic scenes with a known shadow length.
+
+Confidence is multiplicative across the weakest inputs — ray agreement × shadow-
+direction confidence × sun confidence, capped further when few rays contributed
+— because a precise measurement in a wrongly-estimated direction is still wrong.
+Floors follow from `round(height / floor_height)` with a configurable floor
+height, floored at one so a real building is never zero storeys.
+
+Not implemented, deferred to Phase 3: facade-based height from off-nadir views,
+per-building stepped heights, and any inference of building *use* (still never
+guessed).
+
+## Phase 3: 3D generation (extrusion done; roofs and Blender pending)
+
+Implemented in `geometry/`:
+
+- **Extrusion** (`mesh.py`): each reviewed footprint is lifted into a watertight
+  prism — floor cap, roof cap and wall band. Footprints are frequently concave
+  (L/U/cross), so the caps are triangulated by **ear clipping** rather than
+  assuming convexity; the result is verified watertight (every edge shared by
+  exactly two triangles) in tests. Coordinates are metres when a scale is known
+  and pixels otherwise, and the unit travels with the export.
+- **Export** (`export.py`): GLB, text glTF and OBJ are written by hand with no
+  third-party dependency, keeping Phase 1's "NumPy/OpenCV only" property. GLB
+  carries the unit in `asset.extras`; the files load in three.js, Blender and
+  standard glTF viewers.
 - Geometry stays procedural: the mesh is a pure function of the scene JSON, so
   correcting a footprint and regenerating is always safe.
+
+Still planned for Phase 3: roof-type inference where evidence supports it (roofs
+are assumed flat today) and an optional Blender target driven by a standalone
+`bpy` script reading the same scene JSON, so the core never depends on Blender.
 
 ## Phase 4: viewer and corrections
 

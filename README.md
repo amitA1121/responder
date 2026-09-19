@@ -3,10 +3,13 @@
 A local pipeline that turns a satellite or aerial image you supply into an
 approximate, editable 3D representation of the built environment visible in it.
 
-**Current status: Phase 1 — image → detection → footprints → 2D review.**
-Heights, floor counts, roof types and 3D geometry are not generated yet. The
-data model already carries those fields as `null` so the format will not change
-underneath the viewer when Phase 2 lands.
+**Current status: Phase 2 — image → detection → footprints → heights → 3D model.**
+Building heights and floor counts are estimated from cast shadows, and reviewed
+footprints are extruded into a 3D mesh you can open in Blender, three.js or any
+glTF viewer (GLB / glTF / OBJ). Heights are only produced when a scale *and* a
+sun elevation are available; without them the pipeline stops at footprints, and
+every height stays `null` rather than being guessed. Roof shape is still assumed
+flat.
 
 ## What this is and is not
 
@@ -44,9 +47,19 @@ satrecon analyze input/site.jpg --config config/site.example.yaml
 # 3. Open the review page and check the footprints against the image
 #    output/site/review.html
 
-# 4. Confirm a run reproduces exactly
+# 4. Build and export the 3D model (GLB + OBJ by default)
+satrecon generate data/site.json
+
+# 5. Confirm a run reproduces exactly
 satrecon verify data/site.json
 ```
+
+Heights need a **scale** and a **sun elevation** (see "Telling the pipeline what
+you know"). With those set, `analyze` reports `heights N/N from shadows` and
+`generate` extrudes each footprint to its measured height. Without them,
+footprints are still produced and `generate` extrudes them at a placeholder
+height so the layout is still viewable — the export's units and the scene notes
+say which case you are in.
 
 Without installing, prefix with `PYTHONPATH=src python3 -m satrecon`.
 
@@ -54,11 +67,12 @@ Without installing, prefix with `PYTHONPATH=src python3 -m satrecon`.
 
 | Path | What it is |
 |---|---|
-| `data/<name>.json` | The scene: footprints, confidences, provenance |
+| `data/<name>.json` | The scene: footprints, heights, floors, confidences, provenance |
 | `output/<name>/overlay.png` | Footprints drawn over the source image |
 | `output/<name>/footprints.png` | Geometry alone, on a neutral background |
 | `output/<name>/review.html` | Interactive 2D review page |
 | `output/<name>/stages/*.png` | Every intermediate raster the detector used |
+| `output/<name>/model/<name>.glb` | 3D model (binary glTF); also `.obj`, `.gltf` on request |
 
 The stage rasters exist so that a wrong footprint can be traced to the cue that
 caused it, rather than being a black box.
@@ -83,6 +97,28 @@ scale:
 With no scale, every dimension stays in pixels and the review page says
 `Scale: UNKNOWN` in the scene panel.
 
+The second thing height estimation needs is the **sun elevation**. State it
+directly, or give coordinates and a capture time and let it be computed:
+
+```yaml
+sun:
+  elevation_deg: 58            # option A: state it
+  # or, option B — computed from geo + a timestamp with a UTC offset:
+geo:
+  center_lat: 32.081
+  center_lon: 34.780
+sun:
+  timestamp: 2024-06-01T10:30:00+03:00
+```
+
+The height for each building is `shadow_length × tan(elevation)`, measured by
+casting rays from the shadow-facing edge of the footprint along the shadow
+direction. It is an estimate with a confidence, not a survey; a flat roof is
+assumed. When the sun's azimuth is known (computed case) the scene notes include
+a cross-check between the shadow direction recovered from the image and the one
+the sun implies — a large disagreement is a warning that the heights are
+unreliable.
+
 ## Architecture
 
 Each arrow is a module boundary. Stages do not reach across each other.
@@ -91,7 +127,10 @@ Each arrow is a module boundary. Stages do not reach across each other.
  image ─▶ preprocess ─▶ surface cues ─▶ shadow direction ─▶ segmentation
                                                                  │
                                                                  ▼
- 2D review ◀─ footprints ◀─ detection (pluggable) ◀───────────────┘
+   footprints ◀─ detection (pluggable) ◀──────────────────────────┘
+        │
+        ▼
+ solar geometry ─▶ height (shadow rays) ─▶ 3D extrude ─▶ GLB / OBJ / glTF
 ```
 
 | Stage | Module | Job |
@@ -105,6 +144,10 @@ Each arrow is a module boundary. Stages do not reach across each other.
 | Detect | `detect/classical.py` | Score regions, merge roof facets |
 | Footprints | `stages/footprint.py` | Simplify, regularise, map to source pixels |
 | Scale | `stages/scale.py` | Resolve m/px from user input only |
+| Sun | `stages/sun.py` | Solar elevation/azimuth from geo+time, or stated |
+| Height | `stages/height.py` | Shadow-ray height and floor estimation |
+| Extrude | `geometry/mesh.py` | Footprint + height → watertight prism |
+| Export | `geometry/export.py` | GLB / glTF / OBJ writers (no dependencies) |
 | Review | `debug/` | Overlays, stage rasters, interactive page |
 
 ### Why region-based detection
@@ -134,8 +177,12 @@ Nothing downstream knows which detector ran.
 
 Every building carries per-aspect confidence. `null` means *not estimated in
 this run* and is excluded from the average — deliberately different from `0.0`,
-which means *estimated, and unreliable*. In Phase 1, `height` and `floors` are
-always `null`, and `scale` is `null` when no scale was supplied.
+which means *estimated, and unreliable*. `height` and `floors` are `null` when
+no shadow-based height could be measured (no scale, no sun, or no visible
+shadow), and `scale` is `null` when no scale was supplied. A height confidence
+combines how much the shadow rays agreed with how trustworthy the shadow
+direction and sun position were — a good measurement in a wrongly-estimated
+direction is still wrong, so the weakest input caps the result.
 
 Bands shown in the review page and overlay: **HIGH** ≥ 0.66, **MEDIUM** ≥ 0.40,
 otherwise **LOW**.
@@ -163,14 +210,23 @@ long narrow buildings suppressed by the elongation penalty, and wide plazas or
 parking areas accepted as roofs. Default parameters were tuned against a single
 image; expect to adjust `detector.params.accept_score` per image.
 
+Height estimation adds its own assumptions: a flat roof, flat ground around the
+building, and a shadow that falls on open ground rather than onto a neighbour.
+Shadows that are occluded, merge with an adjacent building's shadow, or fall on
+a slope will be mismeasured. The height is `shadow_length × tan(elevation)`, so
+error grows quickly at low sun elevations. Treat every height as an estimate
+with the confidence attached, and use the shadow-direction cross-check (when the
+sun azimuth is known) as a sanity gate.
+
 ## Roadmap
 
 - **Phase 1 (done)** — detection, footprints, 2D review, reproducibility.
-- **Phase 2** — scale-aware dimensions, shadow-based height estimation with
-  explicit uncertainty, floor-count estimation from configurable floor heights,
-  roof-type inference where it can be supported by evidence.
-- **Phase 3** — procedural extrusion, scene assembly, GLB/glTF export with
-  metadata preserved, optional Blender scene generation.
+- **Phase 2 (done)** — scale-aware dimensions, shadow-based height estimation
+  with explicit uncertainty, floor-count estimation from configurable floor
+  heights, procedural extrusion and GLB/glTF/OBJ export with units preserved.
+- **Phase 3** — roof-type inference where evidence supports it, per-building
+  height (stepped roofs) rather than one height per footprint, optional Blender
+  scene assembly.
 - **Phase 4** — 3D viewer with the source image as a scaled ground plane, and
   the manual correction workflow (move vertices, change height, delete a false
   detection, add a missing building) writing back to the scene file.

@@ -1,11 +1,10 @@
 """Command line interface.
 
-    satrecon analyze input/site.jpg --config config/site.yaml
-    satrecon review  data/site.json
+    satrecon analyze  input/site.jpg --config config/site.yaml
+    satrecon review   data/site.json
+    satrecon generate data/site.json     # 3D geometry -> GLB / OBJ
     satrecon detectors
-    satrecon verify  data/site.json      # reproducibility check
-
-Phase 2 will add `generate` (3D scene) and `export` (GLB / Blender).
+    satrecon verify   data/site.json      # reproducibility check
 """
 
 from __future__ import annotations
@@ -62,6 +61,22 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--embed-image", action="store_true")
     _add_common(review)
 
+    generate = subparsers.add_parser(
+        "generate", help="build 3D geometry from a reviewed scene and export it"
+    )
+    generate.add_argument("scene", help="scene JSON produced by `analyze`")
+    generate.add_argument("--out-dir", "-o", help="output directory (default output/<name>/model)")
+    generate.add_argument(
+        "--formats", default="glb,obj",
+        help="comma-separated: glb, obj, gltf (default glb,obj)",
+    )
+    generate.add_argument(
+        "--default-height", type=float, default=3.0,
+        help="placeholder height (metres if scaled, else pixels) for footprints "
+             "with no measured height (default 3.0)",
+    )
+    _add_common(generate)
+
     verify = subparsers.add_parser("verify", help="re-run analysis and compare the result hash")
     verify.add_argument("scene", help="scene JSON to reproduce")
     _add_common(verify)
@@ -116,10 +131,14 @@ def cmd_analyze(args) -> int:
           f"MEDIUM {summary['confidence_bands']['MEDIUM']} / "
           f"LOW {summary['confidence_bands']['LOW']})")
     print(f"scale       {'known' if summary['scale_known'] else 'UNKNOWN - dimensions are relative estimates'}")
+    if summary["heights_estimated"]:
+        print(f"heights     {summary['with_height']}/{summary['buildings']} from shadows "
+              f"(sun {summary['sun_source']})")
+    else:
+        print("heights     not estimated (supply scale + sun elevation to enable)")
     print(f"result hash {summary['result_hash']}")
     print()
-    print("Phase 1 only: heights, floor counts and roof types are not estimated.")
-    print("Open the review page and confirm the footprints before generating 3D geometry.")
+    print("Review the footprints and heights, then: satrecon generate " + str(scene_path))
     return 0
 
 
@@ -137,6 +156,51 @@ def cmd_review(args) -> int:
     out = Path(args.out) if args.out else DEFAULT_OUTPUT_DIR / scene.meta.name / "review.html"
     path = review.write(scene, out, image_path, embed_image=args.embed_image)
     print(path)
+    return 0
+
+
+def cmd_generate(args) -> int:
+    from .geometry import export as geo_export
+    from .geometry import mesh as geo_mesh
+    from .model import Scene
+
+    _configure(args)
+    scene = Scene.load(args.scene)
+
+    formats = [f.strip().lower() for f in args.formats.split(",") if f.strip()]
+    unknown = set(formats) - {"glb", "obj", "gltf"}
+    if unknown:
+        log.error("unknown export format(s): %s", ", ".join(sorted(unknown)))
+        return 2
+
+    model_mesh = geo_mesh.scene_to_mesh(
+        scene.buildings, scene.scale, default_height_units=args.default_height
+    )
+    if model_mesh.is_empty:
+        log.error("no geometry to export - the scene has no usable footprints")
+        return 2
+
+    units = "meters" if scene.scale.known else "pixels"
+    out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_OUTPUT_DIR / scene.meta.name / "model"
+    writers = {"glb": geo_export.write_glb, "obj": geo_export.write_obj, "gltf": geo_export.write_gltf}
+    written: list[Path] = []
+    for fmt in formats:
+        written.append(writers[fmt](model_mesh, out_dir / f"{scene.meta.name}.{fmt}", units=units))
+
+    measured = sum(1 for b in scene.buildings if b.estimated_height_m is not None)
+    print()
+    for path in written:
+        print(f"export      {path}")
+    print(f"buildings   {len(scene.buildings)}  ({measured} with measured heights, "
+          f"{len(scene.buildings) - measured} at placeholder height)")
+    print(f"units       {units}"
+          + ("" if scene.scale.known else "  (no scale supplied - geometry is in pixels)"))
+    print(f"triangles   {len(model_mesh.faces)}")
+    if not scene.sun.elevation_deg:
+        print()
+        print("No sun elevation was available, so heights were not estimated and every")
+        print("building uses the placeholder height. Supply geo.center_lat/lon + "
+              "sun.timestamp, or sun.elevation_deg, then re-run analyze.")
     return 0
 
 
@@ -183,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "analyze": cmd_analyze,
         "review": cmd_review,
+        "generate": cmd_generate,
         "verify": cmd_verify,
         "detectors": cmd_detectors,
     }

@@ -1,0 +1,57 @@
+# satrecon configuration
+
+image:
+  # Unknown for now.
+  # Leave null until the image orientation relative to true north is known.
+  north_offset_deg: null
+
+scale:
+  # Known reference points in the 1266x1287 source image.
+  # These two points are 130 meters apart.
+  reference:
+    point_a: [1079, 515]
+    point_b: [785, 824]
+    distance_meters: 130
+
+geo:
+  center_lat: null
+  center_lon: null
+  crs: null
+
+sun:
+  # Estimated from:
+  # 15 m pole height / ~18 m shadow length.
+  # atan(15 / 18) ~= 39.8 degrees.
+  # This is an estimate, not an exact measurement.
+  elevation_deg: 39.8
+
+  # Unknown for now.
+  azimuth_deg: null
+
+  # Image date is known, exact capture time is not.
+  timestamp: null
+
+height:
+  # Approximate height per floor.
+  floor_height_m: 3.2
+
+shadow_direction:
+  # Unknown for now.
+  override_deg: null
+
+detector:
+  name: classical
+  params:
+    accept_score: 0.30
+
+footprint:
+  # Ignore very small detected candidates.
+  min_area_px: 900
+
+  # Douglas-Peucker simplification.
+  simplify_fraction: 0.012
+
+  regularize: true
+
+logging:
+  level: INFO

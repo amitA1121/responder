@@ -1,7 +1,7 @@
 """Persistent data model.
 
 Source data (what was observed) is kept separate from generated geometry
-(what will later be built from it).  Phase 1 writes the observation half only.
+(the 3D mesh, built on demand from this scene by geometry/).
 
 Every inferred number carries a `source` and a `confidence` so that nothing in
 the file can be mistaken for a measurement.
@@ -91,9 +91,10 @@ class BuildingDetection:
 class Building:
     """A building candidate after footprint cleanup.
 
-    Phase 1 populates geometry and footprint confidence only.  Height, floor
-    and roof fields exist in the schema but stay null until Phase 2, so the
-    file format does not change underneath the viewer.
+    Geometry and footprint confidence come from detection; height and floor
+    fields are filled by the shadow-based height stage when a scale and a sun
+    elevation are available, and stay null otherwise.  Roof type is not yet
+    inferred (assumed flat at extrusion time).
     """
 
     id: str
@@ -147,12 +148,26 @@ class SceneMeta:
 
 
 @dataclass
+class SunInfo:
+    """Solar position used for height estimation and where it came from."""
+
+    elevation_deg: float | None = None
+    azimuth_deg: float | None = None
+    source: str = "unknown"          # user_explicit | computed | unknown
+    confidence: float = 0.0
+    # Shadow direction the sun implies, image frame, for cross-checking the
+    # direction recovered from the image. None when north or azimuth is unknown.
+    expected_shadow_direction_deg: float | None = None
+
+
+@dataclass
 class Scene:
     meta: SceneMeta
     scale: ScaleInfo
     buildings: list[Building] = field(default_factory=list)
     shadow_direction_deg: float | None = None
     north_offset_deg: float | None = None
+    sun: SunInfo = field(default_factory=SunInfo)
     config: dict[str, Any] = field(default_factory=dict)
 
     # -- serialisation ----------------------------------------------------
@@ -171,6 +186,7 @@ class Scene:
                 "scale": asdict(self.scale),
                 "shadowDirectionDeg": self.shadow_direction_deg,
                 "northOffsetDeg": self.north_offset_deg,
+                "sun": asdict(self.sun),
                 "notes": self.meta.notes,
             },
             "provenance": {
@@ -231,12 +247,15 @@ class Scene:
             bbox = raw.get("bounding_box") or (0, 0, 0, 0)
             fields["bounding_box"] = tuple(bbox)
             buildings.append(Building(**fields))
+        sun_raw = dict(scene_node.get("sun", {}))
+        sun = SunInfo(**{k: sun_raw[k] for k in sun_raw if k in SunInfo.__dataclass_fields__})
         return Scene(
             meta=meta,
             scale=scale,
             buildings=buildings,
             shadow_direction_deg=scene_node.get("shadowDirectionDeg"),
             north_offset_deg=scene_node.get("northOffsetDeg"),
+            sun=sun,
             config=data.get("config", {}),
         )
 
@@ -253,6 +272,9 @@ def result_hash(buildings: Sequence[Building], scale: ScaleInfo) -> str:
                 "footprint": [[round(x, 3), round(y, 3)] for x, y in b.footprint],
                 "orientation": round(b.orientation_deg, 4),
                 "area_px": round(b.area_px, 3),
+                # Phase 2: identical input and config must reproduce identical
+                # heights, so the estimate is part of the reproducibility hash.
+                "height_m": None if b.estimated_height_m is None else round(b.estimated_height_m, 3),
             }
             for b in buildings
         ],

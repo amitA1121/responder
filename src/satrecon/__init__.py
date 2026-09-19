@@ -9,6 +9,6 @@ __version__ = "0.1.0"
 
 # Bumped whenever a change alters numerical output for identical input.
 # Recorded in every scene file so runs can be compared across versions.
-MODEL_VERSION = "phase1-2026.09"
+MODEL_VERSION = "phase2-2026.09"
 
-PHASE = 1
+PHASE = 2
